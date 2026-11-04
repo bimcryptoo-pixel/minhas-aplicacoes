@@ -7,6 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root{ --color-bg:#000000; --color-panel:#0b0f0c; --color-panel-alt:#111713; --color-input:#161c18; --color-border:#223028; --color-text:#e8f0ea; --color-muted:#8fa598; }
   html{ background:var(--color-bg); }
@@ -20,6 +21,7 @@
   .inp{ width:100%; padding:.55rem .75rem; background:var(--color-input); border:1px solid var(--color-border); border-radius:.5rem; font-size:.875rem; outline:none; }
   .inp:focus{ border-color:#059669; }
   .lbl{ display:block; font-size:.72rem; color:var(--color-muted); margin-bottom:.25rem; font-weight:600; }
+  .grafico-wrap{ position:relative; height:260px; }
 </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -56,6 +58,7 @@
         <button id="nav-resumo" onclick="mudarAba('resumo')" class="aba-btn px-3 py-2 rounded-lg bg-panel text-mutado hover:bg-input font-semibold text-xs md:text-sm transition">📊 Resumo</button>
         <button id="nav-aplicacoes" onclick="mudarAba('aplicacoes')" class="aba-btn px-3 py-2 rounded-lg bg-panel text-mutado hover:bg-input font-semibold text-xs md:text-sm transition">📋 Aplicações</button>
         <button id="nav-bancos" onclick="mudarAba('bancos')" class="aba-btn px-3 py-2 rounded-lg bg-panel text-mutado hover:bg-input font-semibold text-xs md:text-sm transition">🏦 Bancos</button>
+        <button id="nav-analises" onclick="mudarAba('analises')" class="aba-btn px-3 py-2 rounded-lg bg-panel text-mutado hover:bg-input font-semibold text-xs md:text-sm transition">📈 Análises</button>
       </nav>
       <button onclick="abrirTrocarSenha()" class="px-3 py-2 bg-panel hover:bg-input border border-linha rounded-lg text-xs font-bold transition">🔑 Senha</button>
       <button onclick="fazerLogout()" class="px-3 py-2 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-lg text-xs font-bold transition">🔒 Sair</button>
@@ -90,6 +93,10 @@ const estado = {
   recebimentos: [],       // { id, aplicacaoId, data, valor, observacao }
   filtroStatus: 'todas',  // todas | aplicado | parcial | quitado | vencida
   filtroBanco: '',
+  filtroPeriodo: 'tudo',  // tudo | 30d | mes | ano | custom
+  filtroDe: '',
+  filtroAte: '',
+  filtroBusca: '',
 };
 
 /* ===================== HELPERS ===================== */
@@ -171,7 +178,8 @@ function montanteEm(ap, dataAlvo) {
   if (ap.taxaTipo === 'total') return ap.valor * (1 + ap.taxa / 100);
   return ap.valor * Math.pow(1 + ap.taxa / 100, mesesEntre(ap.dataEnvio, dataAlvo));
 }
-const montantePrevisto = ap => montanteEm(ap, ap.dataPrevista || ap.dataEnvio);
+// Previsto sempre em centavos fechados — sem isso, somas de várias aplicações vazam 1 centavo (61509.375 - 31509.38 = 29999.99...).
+const montantePrevisto = ap => Math.round(montanteEm(ap, ap.dataPrevista || ap.dataEnvio) * 100) / 100;
 const recebidoDe = apId => estado.recebimentos.filter(r => r.aplicacaoId === apId).reduce((s, r) => s + r.valor, 0);
 function statusDe(ap) {
   if (ap.encerrada) return 'encerrada';
@@ -189,13 +197,106 @@ const STATUS_INFO = {
 };
 const nomeBanco = id => { const b = estado.bancos.find(x => x.id === id); return b ? b.nome : '—'; };
 
+/* ===================== FILTROS (valem pra Aplicações e Análises) ===================== */
+const isoData = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+function periodoRange() {
+  const p = estado.filtroPeriodo, hoje = hojeLocal();
+  if (p === '30d') { const d = new Date(hoje + 'T12:00:00'); d.setDate(d.getDate() - 30); return { de: isoData(d), ate: hoje }; }
+  if (p === 'mes') return { de: hoje.slice(0, 8) + '01', ate: hoje };
+  if (p === 'ano') return { de: hoje.slice(0, 4) + '-01-01', ate: hoje };
+  if (p === 'custom') return { de: estado.filtroDe || '', ate: estado.filtroAte || '' };
+  return { de: '', ate: '' };
+}
+function aplicacoesFiltradas() {
+  let lista = estado.aplicacoes.slice();
+  const { de, ate } = periodoRange();
+  if (de) lista = lista.filter(a => a.dataEnvio >= de);
+  if (ate) lista = lista.filter(a => a.dataEnvio <= ate);
+  if (estado.filtroBanco) lista = lista.filter(a => a.bancoId === estado.filtroBanco);
+  if (estado.filtroStatus === 'vencida') lista = lista.filter(a => vencida(a));
+  else if (estado.filtroStatus !== 'todas') lista = lista.filter(a => statusDe(a) === estado.filtroStatus);
+  const q = (estado.filtroBusca || '').trim().toLowerCase();
+  if (q) lista = lista.filter(a => nomeBanco(a.bancoId).toLowerCase().includes(q) || (a.observacao || '').toLowerCase().includes(q));
+  return lista;
+}
+function filtrosAtivos() { return estado.filtroStatus !== 'todas' || !!estado.filtroBanco || estado.filtroPeriodo !== 'tudo' || !!(estado.filtroBusca || '').trim(); }
+function limparFiltros() {
+  estado.filtroStatus = 'todas'; estado.filtroBanco = ''; estado.filtroPeriodo = 'tudo';
+  estado.filtroDe = ''; estado.filtroAte = ''; estado.filtroBusca = '';
+  renderAbaAtual();
+}
+// Barra de filtros compartilhada; fn = função de re-render da aba ('renderAplicacoes' | 'renderAnalises').
+function barraFiltrosHTML(fn) {
+  const cls = 'px-3 py-2 bg-input border border-linha rounded-lg text-xs outline-none cursor-pointer';
+  const opt = (v, atual, rotulo) => `<option value="${v}" ${atual === v ? 'selected' : ''}>${rotulo}</option>`;
+  return `
+    <select onchange="estado.filtroStatus=this.value; ${fn}($('conteudo-principal'))" class="${cls}">
+      ${opt('todas', estado.filtroStatus, 'Todos os status')}${opt('aplicado', estado.filtroStatus, '🔵 Aplicado')}${opt('parcial', estado.filtroStatus, '🟡 Parcial')}${opt('quitado', estado.filtroStatus, '✅ Quitado')}${opt('encerrada', estado.filtroStatus, '✅ Encerrada')}${opt('vencida', estado.filtroStatus, '⚠️ Vencida')}
+    </select>
+    <select onchange="estado.filtroBanco=this.value; ${fn}($('conteudo-principal'))" class="${cls}">
+      <option value="">🏦 Todos os bancos</option>
+      ${estado.bancos.map(b => `<option value="${b.id}" ${estado.filtroBanco === b.id ? 'selected' : ''}>${esc(b.nome)}</option>`).join('')}
+    </select>
+    <select onchange="estado.filtroPeriodo=this.value; ${fn}($('conteudo-principal'))" class="${cls}">
+      ${opt('tudo', estado.filtroPeriodo, '📅 Todo o período')}${opt('30d', estado.filtroPeriodo, 'Últimos 30 dias')}${opt('mes', estado.filtroPeriodo, 'Este mês')}${opt('ano', estado.filtroPeriodo, 'Este ano')}${opt('custom', estado.filtroPeriodo, 'Personalizado…')}
+    </select>
+    ${estado.filtroPeriodo === 'custom' ? `<input id="fDe" type="date" class="${cls}" value="${estado.filtroDe}" onchange="estado.filtroDe=this.value; ${fn}($('conteudo-principal'))"><span class="text-xs text-mutado">até</span><input id="fAte" type="date" class="${cls}" value="${estado.filtroAte}" onchange="estado.filtroAte=this.value; ${fn}($('conteudo-principal'))">` : ''}
+    <input id="fBusca" type="text" class="${cls}" style="min-width:190px" placeholder="🔎 Buscar banco ou observação…" value="${esc(estado.filtroBusca)}" oninput="estado.filtroBusca=this.value; estado._focoBusca=true; ${fn}($('conteudo-principal'))">
+    ${filtrosAtivos() ? `<button onclick="limparFiltros()" class="px-3 py-2 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white text-xs font-bold transition">✖ Limpar filtros</button>` : ''}`;
+}
+
+/* ===================== GRÁFICOS (Chart.js) ===================== */
+let GRAFICOS = {};
+function destruirGraficos() { Object.values(GRAFICOS).forEach(c => { try { c.destroy(); } catch (e) {} }); GRAFICOS = {}; }
+const PALETA = ['#34d399', '#38bdf8', '#f59e0b', '#a78bfa', '#fb7185', '#facc15', '#2dd4bf', '#f472b6'];
+const fmtEixo = v => 'R$ ' + Number(v).toLocaleString('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
+const MESES_ROT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+function ultimosMeses(n) {
+  const meses = [], agora = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const x = new Date(agora.getFullYear(), agora.getMonth() - i, 1);
+    meses.push({ key: x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0'), rotulo: MESES_ROT[x.getMonth()] + '/' + String(x.getFullYear()).slice(2) });
+  }
+  return meses;
+}
+const ESCALAS_RS = { y: { ticks: { callback: fmtEixo }, grid: { color: 'rgba(143,165,152,.12)' } }, x: { grid: { display: false } } };
+const LEGENDA = { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } };
+const DICA_RS = { callbacks: { label: c => ' ' + (c.dataset.label ? c.dataset.label + ': ' : '') + fmtR$(c.parsed.y ?? c.parsed.x ?? c.parsed) } };
+function semDados(idWrap, msg) { const w = $(idWrap); if (w) w.innerHTML = `<p class="text-sm text-mutado flex items-center justify-center h-full py-10">${msg}</p>`; }
+function montarGraficos(lista) {
+  if (!window.Chart) return;
+  Chart.defaults.color = '#8fa598';
+  Chart.defaults.borderColor = 'rgba(143,165,152,.12)';
+  destruirGraficos();
+  const ids = new Set(lista.map(a => a.id));
+  const recs = estado.recebimentos.filter(r => ids.has(r.aplicacaoId));
+  // 🥧 Saldo a receber por banco (só aplicações em aberto)
+  const porBanco = {};
+  lista.forEach(a => { const st = statusDe(a); if (st !== 'aplicado' && st !== 'parcial') return; const falta = Math.max(0, montantePrevisto(a) - recebidoDe(a.id)); if (falta > 0) { const nb = nomeBanco(a.bancoId); porBanco[nb] = (porBanco[nb] || 0) + falta; } });
+  const rotB = Object.keys(porBanco);
+  if (rotB.length && $('gBanco')) GRAFICOS.banco = new Chart($('gBanco'), { type: 'doughnut', data: { labels: rotB, datasets: [{ data: rotB.map(k => +porBanco[k].toFixed(2)), backgroundColor: PALETA, borderColor: '#0b0f0c', borderWidth: 2 }] }, options: { maintainAspectRatio: false, cutout: '58%', plugins: { legend: LEGENDA, tooltip: { callbacks: { label: c => ' ' + fmtR$(c.parsed) } } } } });
+  else semDados('wrapBanco', 'Nada a receber das aplicações em aberto neste filtro.');
+  // 📊 Fluxo mensal + 📈 recebido acumulado (últimos 12 meses)
+  const meses = ultimosMeses(12);
+  const envios = meses.map(m => lista.filter(a => (a.dataEnvio || '').slice(0, 7) === m.key).reduce((s, a) => s + a.valor, 0));
+  const recM = meses.map(m => recs.filter(r => (r.data || '').slice(0, 7) === m.key).reduce((s, r) => s + r.valor, 0));
+  let acc = 0; const acum = recM.map(v => acc += v);
+  if ($('gFluxo')) GRAFICOS.fluxo = new Chart($('gFluxo'), { type: 'bar', data: { labels: meses.map(m => m.rotulo), datasets: [{ label: 'Enviado', data: envios, backgroundColor: '#38bdf8', borderRadius: 4 }, { label: 'Recebido', data: recM, backgroundColor: '#34d399', borderRadius: 4 }] }, options: { maintainAspectRatio: false, plugins: { legend: LEGENDA, tooltip: DICA_RS }, scales: ESCALAS_RS } });
+  if ($('gAcum')) GRAFICOS.acum = new Chart($('gAcum'), { type: 'line', data: { labels: meses.map(m => m.rotulo), datasets: [{ label: 'Recebido acumulado', data: acum, borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,.15)', fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: '#34d399' }] }, options: { maintainAspectRatio: false, plugins: { legend: LEGENDA, tooltip: DICA_RS }, scales: ESCALAS_RS } });
+  // ↔️ Previsto × Recebido por aplicação (top 10 por valor)
+  const top = lista.slice().sort((a, b) => b.valor - a.valor).slice(0, 10);
+  if (top.length && $('gPrevRec')) GRAFICOS.prevrec = new Chart($('gPrevRec'), { type: 'bar', data: { labels: top.map(a => nomeBanco(a.bancoId) + ' · ' + fmtData(a.dataEnvio)), datasets: [{ label: 'Previsto', data: top.map(a => +montantePrevisto(a).toFixed(2)), backgroundColor: '#f59e0b', borderRadius: 4 }, { label: 'Recebido', data: top.map(a => +recebidoDe(a.id).toFixed(2)), backgroundColor: '#34d399', borderRadius: 4 }] }, options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: LEGENDA, tooltip: DICA_RS }, scales: { x: { ticks: { callback: fmtEixo }, grid: { color: 'rgba(143,165,152,.12)' } }, y: { grid: { display: false }, ticks: { font: { size: 11 } } } } } });
+}
+
 /* ===================== NAVEGAÇÃO ===================== */
 function mudarAba(aba) {
+  destruirGraficos();
   estado.abaAtiva = aba;
-  ['resumo', 'aplicacoes', 'bancos'].forEach(x => { const b = $('nav-' + x); if (b) b.classList.toggle('ativa', x === aba); });
+  ['resumo', 'aplicacoes', 'bancos', 'analises'].forEach(x => { const b = $('nav-' + x); if (b) b.classList.toggle('ativa', x === aba); });
   const main = $('conteudo-principal');
   if (aba === 'resumo') renderResumo(main);
   else if (aba === 'aplicacoes') renderAplicacoes(main);
+  else if (aba === 'analises') renderAnalises(main);
   else renderBancos(main);
 }
 
@@ -253,11 +354,7 @@ function renderResumo(container) {
 
 /* ===================== 📋 APLICAÇÕES ===================== */
 function renderAplicacoes(container) {
-  const hoje = hojeLocal();
-  let lista = estado.aplicacoes.slice();
-  if (estado.filtroBanco) lista = lista.filter(a => a.bancoId === estado.filtroBanco);
-  if (estado.filtroStatus === 'vencida') lista = lista.filter(a => vencida(a));
-  else if (estado.filtroStatus !== 'todas') lista = lista.filter(a => statusDe(a) === estado.filtroStatus);
+  const lista = aplicacoesFiltradas();
 
   const linhas = lista.map(a => {
     const st = statusDe(a), info = STATUS_INFO[st];
@@ -287,19 +384,9 @@ function renderAplicacoes(container) {
       <h2 class="text-xl md:text-2xl font-black">📋 Aplicações</h2>
       <button onclick="abrirModalAplicacao()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition">＋ Nova aplicação</button>
     </div>
-    <div class="flex flex-wrap gap-2 mb-4">
-      <select onchange="estado.filtroStatus=this.value; renderAplicacoes($('conteudo-principal'))" class="px-3 py-2 bg-input border border-linha rounded-lg text-xs outline-none cursor-pointer">
-        <option value="todas" ${estado.filtroStatus === 'todas' ? 'selected' : ''}>Todos os status</option>
-        <option value="aplicado" ${estado.filtroStatus === 'aplicado' ? 'selected' : ''}>🔵 Aplicado</option>
-        <option value="parcial" ${estado.filtroStatus === 'parcial' ? 'selected' : ''}>🟡 Parcial</option>
-        <option value="quitado" ${estado.filtroStatus === 'quitado' ? 'selected' : ''}>✅ Quitado</option>
-        <option value="encerrada" ${estado.filtroStatus === 'encerrada' ? 'selected' : ''}>✅ Encerrada</option>
-        <option value="vencida" ${estado.filtroStatus === 'vencida' ? 'selected' : ''}>⚠️ Vencida</option>
-      </select>
-      <select onchange="estado.filtroBanco=this.value; renderAplicacoes($('conteudo-principal'))" class="px-3 py-2 bg-input border border-linha rounded-lg text-xs outline-none cursor-pointer">
-        <option value="">🏦 Todos os bancos</option>
-        ${estado.bancos.map(b => `<option value="${b.id}" ${estado.filtroBanco === b.id ? 'selected' : ''}>${esc(b.nome)}</option>`).join('')}
-      </select>
+    <div class="flex flex-wrap gap-2 mb-4 items-center">
+      ${barraFiltrosHTML('renderAplicacoes')}
+      <span class="text-xs text-mutado">${lista.length} resultado(s)</span>
     </div>
     <div class="bg-panel border border-linha rounded-xl overflow-hidden">
       <div class="overflow-x-auto">
@@ -307,10 +394,11 @@ function renderAplicacoes(container) {
           <thead class="bg-panelAlt text-texto uppercase text-[11px]">
             <tr><th class="p-3">Envio</th><th class="p-3">Banco</th><th class="p-3">Valor</th><th class="p-3">Retorno</th><th class="p-3">Previsto</th><th class="p-3">Recebido</th><th class="p-3">Falta</th><th class="p-3">Vencimento</th><th class="p-3">Status</th><th class="p-3">Ações</th></tr>
           </thead>
-          <tbody>${linhas || '<tr><td colspan="10" class="p-5 text-center text-mutado">Nenhuma aplicação encontrada.</td></tr>'}</tbody>
+          <tbody>${linhas || '<tr><td colspan="10" class="p-5 text-center text-mutado">Nenhuma aplicação encontrada com esses filtros.</td></tr>'}</tbody>
         </table>
       </div>
     </div>`;
+  if (estado._focoBusca) { estado._focoBusca = false; const i = $('fBusca'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
 }
 
 /* ---------- Modal: nova / editar aplicação ---------- */
@@ -430,6 +518,45 @@ async function alternarEncerrada(apId, encerrar) {
   } catch (e) { console.error(e); toast('Não foi possível atualizar.', false); }
 }
 function renderAbaAtual() { mudarAba(estado.abaAtiva); }
+
+/* ===================== 📈 ANÁLISES ===================== */
+function renderAnalises(container) {
+  const lista = aplicacoesFiltradas();
+  const totalEnviado = lista.reduce((s, a) => s + a.valor, 0);
+  const totalRecebido = lista.reduce((s, a) => s + recebidoDe(a.id), 0);
+  const saldoReceber = lista.reduce((s, a) => { const st = statusDe(a); return (st === 'aplicado' || st === 'parcial') ? s + Math.max(0, montantePrevisto(a) - recebidoDe(a.id)) : s; }, 0);
+  const kpi = (id, titulo, valor, cor) => `
+    <div class="bg-panel border border-linha rounded-xl p-4">
+      <p class="text-[10px] uppercase text-mutado font-bold mb-1">${titulo}</p>
+      <p id="${id}" class="text-lg md:text-2xl font-black ${cor}">${valor}</p>
+    </div>`;
+  const painel = (titulo, sub, idCanvas, idWrap) => `
+    <div class="bg-panel border border-linha rounded-xl p-4 md:p-5">
+      <h3 class="text-sm font-black">${titulo}</h3>
+      <p class="text-[11px] text-mutado mb-3">${sub}</p>
+      <div class="grafico-wrap" id="${idWrap}"><canvas id="${idCanvas}"></canvas></div>
+    </div>`;
+  container.innerHTML = `
+    <h2 class="text-xl md:text-2xl font-black mb-5">📈 Análises</h2>
+    <div class="flex flex-wrap gap-2 mb-4 items-center">
+      ${barraFiltrosHTML('renderAnalises')}
+      <span class="text-xs text-mutado">${lista.length} resultado(s)</span>
+    </div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      ${kpi('kpiNum', '📋 Aplicações no filtro', String(lista.length), 'text-texto')}
+      ${kpi('kpiEnviado', '💸 Total enviado', fmtR$(totalEnviado), 'text-texto')}
+      ${kpi('kpiRecebido', '💰 Total recebido', fmtR$(totalRecebido), 'text-emerald-400')}
+      ${kpi('kpiSaldo', '⏳ Saldo a receber', fmtR$(saldoReceber), 'text-amber-400')}
+    </div>
+    ${lista.length ? `<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      ${painel('🥧 Saldo a receber por banco', 'Quanto falta voltar de cada banco (aplicações em aberto)', 'gBanco', 'wrapBanco')}
+      ${painel('📊 Fluxo mensal', 'Enviado × recebido por mês (últimos 12 meses)', 'gFluxo', 'wrapFluxo')}
+      ${painel('↔️ Previsto × Recebido', 'Por aplicação (as 10 maiores)', 'gPrevRec', 'wrapPrevRec')}
+      ${painel('📈 Recebido acumulado', 'Quanto já voltou, mês a mês (últimos 12 meses)', 'gAcum', 'wrapAcum')}
+    </div>` : '<div class="bg-panel border border-linha rounded-xl p-6 text-center text-mutado text-sm">Nenhuma aplicação com esses filtros. Ajuste os filtros ou cadastre uma aplicação.</div>'}`;
+  if (lista.length) montarGraficos(lista);
+  if (estado._focoBusca) { estado._focoBusca = false; const i = $('fBusca'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }
+}
 
 /* ===================== 🏦 BANCOS ===================== */
 let bancoEditando = null;
