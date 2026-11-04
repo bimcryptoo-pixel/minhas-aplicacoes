@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>💰 Minhas Aplicações</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{ --color-bg:#000000; --color-panel:#0b0f0c; --color-panel-alt:#111713; --color-input:#161c18; --color-border:#223028; --color-text:#e8f0ea; --color-muted:#8fa598; }
+  html{ background:var(--color-bg); }
+  body{ background:var(--color-bg); color:var(--color-text); font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+  .bg-panel{ background:var(--color-panel); } .bg-panelAlt{ background:var(--color-panel-alt); } .bg-input{ background:var(--color-input); }
+  .border-linha{ border-color:var(--color-border); } .text-mutado{ color:var(--color-muted); }
+  input,select,textarea{ color-scheme:dark; }
+  input[type="date"]::-webkit-calendar-picker-indicator{ filter:invert(.7); cursor:pointer; }
+  ::-webkit-scrollbar{ width:9px; height:9px; } ::-webkit-scrollbar-thumb{ background:#2a3a30; border-radius:6px; } ::-webkit-scrollbar-track{ background:#0b0f0c; }
+  .aba-btn.ativa{ background:#065f46 !important; color:#fff !important; }
+  .inp{ width:100%; padding:.55rem .75rem; background:var(--color-input); border:1px solid var(--color-border); border-radius:.5rem; font-size:.875rem; outline:none; }
+  .inp:focus{ border-color:#059669; }
+  .lbl{ display:block; font-size:.72rem; color:var(--color-muted); margin-bottom:.25rem; font-weight:600; }
+</style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+<!-- ===================== LOGIN ===================== -->
+<div id="telaLogin" class="fixed inset-0 z-[200] flex items-center justify-center p-4" style="background:#000;">
+  <div class="w-full max-w-sm bg-panel border border-linha rounded-2xl p-6 shadow-2xl">
+    <div class="text-center mb-6">
+      <div class="text-5xl mb-2">💰</div>
+      <h1 class="text-xl font-black">Minhas Aplicações</h1>
+      <p class="text-xs text-mutado mt-1">Controle do seu dinheiro aplicado</p>
+    </div>
+    <div class="space-y-3">
+      <div><label class="lbl">Usuário</label><input id="loginUsuario" class="inp" autocomplete="username" placeholder="Seu usuário"></div>
+      <div><label class="lbl">Senha</label><input id="loginSenha" type="password" class="inp" autocomplete="current-password" placeholder="Sua senha" onkeydown="if(event.key==='Enter')fazerLogin()"></div>
+      <p id="loginErro" class="text-xs text-red-400 font-semibold hidden"></p>
+      <button onclick="fazerLogin()" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black rounded-xl transition">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app" class="hidden flex-1 flex flex-col">
+  <header class="sticky top-0 z-40 border-b border-linha" style="background:rgba(0,0,0,.92); backdrop-filter:blur(6px);">
+    <div class="max-w-6xl mx-auto px-3 md:px-4 py-3 flex flex-wrap items-center gap-2 md:gap-3">
+      <div class="flex items-center gap-2 mr-1">
+        <span class="text-2xl">💰</span>
+        <div class="leading-tight">
+          <p class="font-black text-sm md:text-base">Minhas Aplicações</p>
+          <p class="text-[10px] text-mutado" id="headerUsuario">—</p>
+        </div>
+      </div>
+      <nav class="flex gap-1.5 md:gap-2 flex-1">
+        <button id="nav-resumo" onclick="mudarAba('resumo')" class="aba-btn px-3 py-2 rounded-lg bg-panel text-mutado hover:bg-input font-semibold text-xs md:text-sm transition">📊 Resumo</button>
+        <button id="nav-aplicacoes" onclick="mudarAba('aplicacoes')" class="aba-btn px-3 py-2 rounded-lg bg-panel text-mutado hover:bg-input font-semibold text-xs md:text-sm transition">📋 Aplicações</button>
+        <button id="nav-bancos" onclick="mudarAba('bancos')" class="aba-btn px-3 py-2 rounded-lg bg-panel text-mutado hover:bg-input font-semibold text-xs md:text-sm transition">🏦 Bancos</button>
+      </nav>
+      <button onclick="abrirTrocarSenha()" class="px-3 py-2 bg-panel hover:bg-input border border-linha rounded-lg text-xs font-bold transition">🔑 Senha</button>
+      <button onclick="fazerLogout()" class="px-3 py-2 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-lg text-xs font-bold transition">🔒 Sair</button>
+    </div>
+  </header>
+  <main id="conteudo-principal" class="flex-1 w-full max-w-6xl mx-auto p-3 md:p-5"></main>
+  <footer class="text-center text-[10px] text-mutado py-4">💰 Minhas Aplicações — seus dados, só seus.</footer>
+</div>
+
+<div id="modalRoot"></div>
+
+<script>
+/* ============================================================
+   CONFIGURAÇÃO — preencher com o projeto Supabase novo do Fabio
+   ============================================================ */
+// Dados no projeto do BetControl, em tabelas próprias (fin_*) protegidas por
+// uma chave secreta de cabeçalho: sem o token, o banco não responde nada delas.
+const SUPABASE_URL = 'https://uxwuxlkvxubbknaffkca.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_ALboDYr5YVBcsso2qH5mig_HlLFPfle';
+const FIN_TOKEN = '8553ceb5e90c36f71f155fc356d120e620952ce61f233018';
+
+const supabaseClient = window.supabase
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { global: { headers: { 'x-fin-token': FIN_TOKEN } } })
+  : null;
+
+/* ===================== ESTADO ===================== */
+const estado = {
+  usuario: null,          // { id, usuario, nome }
+  abaAtiva: 'resumo',
+  bancos: [],             // { id, nome, agencia, conta, titular }
+  aplicacoes: [],         // { id, bancoId, dataEnvio, valor, taxa, taxaTipo, dataPrevista, observacao, encerrada, createdAt }
+  recebimentos: [],       // { id, aplicacaoId, data, valor, observacao }
+  filtroStatus: 'todas',  // todas | aplicado | parcial | quitado | vencida
+  filtroBanco: '',
+};
+
+/* ===================== HELPERS ===================== */
+const $ = id => document.getElementById(id);
+const fmtR$ = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtData = d => d ? d.split('-').reverse().join('/') : '—';
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const novoId = p => p + '-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+function hojeLocal() { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); }
+function toast(msg, ok = true) {
+  const t = document.createElement('div');
+  t.className = 'fixed left-1/2 -translate-x-1/2 bottom-6 z-[300] px-4 py-2.5 rounded-xl text-sm font-bold shadow-2xl ' + (ok ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white');
+  t.textContent = msg; document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+
+/* ===================== API (Supabase REST via supabase-js) ===================== */
+async function carregarTudo() {
+  if (!supabaseClient) return;
+  const [b, a, r] = await Promise.all([
+    supabaseClient.from('fin_bancos').select('*').order('nome'),
+    supabaseClient.from('fin_aplicacoes').select('*').order('data_envio', { ascending: false }),
+    supabaseClient.from('fin_recebimentos').select('*').order('data', { ascending: false }),
+  ]);
+  if (b.error) throw b.error; if (a.error) throw a.error; if (r.error) throw r.error;
+  estado.bancos = (b.data || []).map(x => ({ id: x.id, nome: x.nome, agencia: x.agencia || '', conta: x.conta || '', titular: x.titular || '' }));
+  estado.aplicacoes = (a.data || []).map(x => ({ id: x.id, bancoId: x.banco_id, dataEnvio: x.data_envio, valor: Number(x.valor) || 0, taxa: Number(x.taxa) || 0, taxaTipo: x.taxa_tipo || 'mes', dataPrevista: x.data_prevista, observacao: x.observacao || '', encerrada: !!x.encerrada, createdAt: x.created_at }));
+  estado.recebimentos = (r.data || []).map(x => ({ id: x.id, aplicacaoId: x.aplicacao_id, data: x.data, valor: Number(x.valor) || 0, observacao: x.observacao || '' }));
+}
+
+/* ===================== LOGIN ===================== */
+function usuarioSalvo() { try { return JSON.parse(localStorage.getItem('maplic_usuario') || 'null'); } catch (e) { return null; } }
+async function fazerLogin() {
+  const u = $('loginUsuario').value.trim(), s = $('loginSenha').value;
+  const erro = $('loginErro'); erro.classList.add('hidden');
+  if (!supabaseClient) { erro.textContent = '⚙️ Sistema aguardando a configuração do banco de dados.'; erro.classList.remove('hidden'); return; }
+  if (!u || !s) { erro.textContent = 'Preencha usuário e senha.'; erro.classList.remove('hidden'); return; }
+  try {
+    const { data, error } = await supabaseClient.from('fin_usuarios').select('*').eq('usuario', u).limit(1);
+    if (error) throw error;
+    const usr = (data || [])[0];
+    if (!usr || usr.senha !== s) { erro.textContent = 'Usuário ou senha incorretos.'; erro.classList.remove('hidden'); return; }
+    estado.usuario = { id: usr.id, usuario: usr.usuario, nome: usr.nome || usr.usuario };
+    localStorage.setItem('maplic_usuario', JSON.stringify(estado.usuario));
+    await entrarApp();
+  } catch (e) { console.error(e); erro.textContent = 'Não foi possível entrar. Tente de novo.'; erro.classList.remove('hidden'); }
+}
+function fazerLogout() { localStorage.removeItem('maplic_usuario'); location.reload(); }
+async function entrarApp() {
+  $('telaLogin').classList.add('hidden');
+  $('app').classList.remove('hidden');
+  $('headerUsuario').textContent = '👤 ' + (estado.usuario.nome || estado.usuario.usuario);
+  try { await carregarTudo(); } catch (e) { console.error(e); toast('Erro ao carregar os dados.', false); }
+  mudarAba('resumo');
+}
+async function abrirTrocarSenha() {
+  const atual = prompt('Sua senha atual:'); if (atual === null) return;
+  const { data } = await supabaseClient.from('fin_usuarios').select('*').eq('id', estado.usuario.id).limit(1);
+  const usr = (data || [])[0];
+  if (!usr || usr.senha !== atual) { toast('Senha atual incorreta.', false); return; }
+  const nova = prompt('Nova senha (mínimo 6 caracteres):'); if (nova === null) return;
+  if (!nova || nova.length < 6) { toast('A nova senha precisa de ao menos 6 caracteres.', false); return; }
+  const conf = prompt('Confirme a nova senha:'); if (conf !== nova) { toast('A confirmação não bate com a nova senha.', false); return; }
+  const { error } = await supabaseClient.from('fin_usuarios').update({ senha: nova }).eq('id', estado.usuario.id);
+  if (error) { toast('Não foi possível trocar a senha.', false); return; }
+  toast('🔑 Senha alterada.');
+}
+
+/* ===================== CONTAS (matemática das aplicações) ===================== */
+// Meses entre duas datas (com fração por dias/30) — base dos juros compostos mensais.
+function mesesEntre(de, ate) {
+  const a = new Date(de + 'T12:00:00'), b = new Date(ate + 'T12:00:00');
+  let m = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth());
+  m += (b.getDate() - a.getDate()) / 30;
+  return Math.max(0, m);
+}
+// Quanto a aplicação deve renderizar (montante) numa data-alvo.
+function montanteEm(ap, dataAlvo) {
+  if (ap.taxaTipo === 'total') return ap.valor * (1 + ap.taxa / 100);
+  return ap.valor * Math.pow(1 + ap.taxa / 100, mesesEntre(ap.dataEnvio, dataAlvo));
+}
+const montantePrevisto = ap => montanteEm(ap, ap.dataPrevista || ap.dataEnvio);
+const recebidoDe = apId => estado.recebimentos.filter(r => r.aplicacaoId === apId).reduce((s, r) => s + r.valor, 0);
+function statusDe(ap) {
+  if (ap.encerrada) return 'encerrada';
+  const rec = recebidoDe(ap.id);
+  if (rec <= 0) return 'aplicado';
+  if (rec >= montantePrevisto(ap) - 0.005) return 'quitado';
+  return 'parcial';
+}
+const vencida = ap => { const s = statusDe(ap); return s !== 'quitado' && s !== 'encerrada' && ap.dataPrevista && ap.dataPrevista < hojeLocal(); };
+const STATUS_INFO = {
+  aplicado:  { rotulo: '🔵 Aplicado',  cls: 'text-sky-400' },
+  parcial:   { rotulo: '🟡 Parcial',   cls: 'text-amber-400' },
+  quitado:   { rotulo: '✅ Quitado',   cls: 'text-emerald-400' },
+  encerrada: { rotulo: '✅ Encerrada', cls: 'text-emerald-400' },
+};
+const nomeBanco = id => { const b = estado.bancos.find(x => x.id === id); return b ? b.nome : '—'; };
+
+/* ===================== NAVEGAÇÃO ===================== */
+function mudarAba(aba) {
+  estado.abaAtiva = aba;
+  ['resumo', 'aplicacoes', 'bancos'].forEach(x => { const b = $('nav-' + x); if (b) b.classList.toggle('ativa', x === aba); });
+  const main = $('conteudo-principal');
+  if (aba === 'resumo') renderResumo(main);
+  else if (aba === 'aplicacoes') renderAplicacoes(main);
+  else renderBancos(main);
+}
+
+/* ===================== 📊 RESUMO ===================== */
+function renderResumo(container) {
+  const hoje = hojeLocal();
+  const aps = estado.aplicacoes;
+  const abertas = aps.filter(a => { const s = statusDe(a); return s === 'aplicado' || s === 'parcial'; });
+  const fechadas = aps.filter(a => { const s = statusDe(a); return s === 'quitado' || s === 'encerrada'; });
+  const totalAplicado = abertas.reduce((s, a) => s + a.valor, 0);
+  const totalRecebido = aps.reduce((s, a) => s + recebidoDe(a.id), 0);
+  const lucroRecebido = fechadas.reduce((s, a) => s + Math.max(0, recebidoDe(a.id) - a.valor), 0);
+  const lucroPrevisto = abertas.reduce((s, a) => s + Math.max(0, montantePrevisto(a) - a.valor), 0);
+  const listaVenc = abertas.slice().sort((a, b) => (a.dataPrevista || '').localeCompare(b.dataPrevista || ''));
+  const vencidas = listaVenc.filter(a => vencida(a));
+  const proximas = listaVenc.filter(a => !vencida(a)).slice(0, 5);
+
+  const card = (titulo, valor, cor) => `
+    <div class="bg-panel border border-linha rounded-xl p-4">
+      <p class="text-[10px] uppercase text-mutado font-bold mb-1">${titulo}</p>
+      <p class="text-lg md:text-2xl font-black ${cor}">${valor}</p>
+    </div>`;
+  const linhaVenc = a => {
+    const rec = recebidoDe(a.id), falta = Math.max(0, montantePrevisto(a) - rec);
+    const atrasada = vencida(a);
+    return `<div class="flex flex-wrap items-center gap-2 justify-between py-2.5 border-b border-linha last:border-0">
+      <div class="min-w-0">
+        <p class="text-sm font-bold truncate">${esc(nomeBanco(a.bancoId))} <span class="text-mutado font-normal">· enviado em ${fmtData(a.dataEnvio)}</span></p>
+        <p class="text-xs text-mutado">${fmtR$(a.valor)} a ${a.taxa}% ${a.taxaTipo === 'mes' ? 'ao mês' : 'no total'} · falta ${fmtR$(falta)}</p>
+      </div>
+      <span class="text-xs font-bold ${atrasada ? 'text-red-400' : 'text-amber-400'}">${atrasada ? '⚠️ Venceu em ' : '⏰ Vence em '}${fmtData(a.dataPrevista)}</span>
+    </div>`;
+  };
+
+  container.innerHTML = `
+    <div class="flex items-center justify-between mb-5">
+      <h2 class="text-xl md:text-2xl font-black">📊 Resumo</h2>
+      <button onclick="abrirModalAplicacao()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition">＋ Nova aplicação</button>
+    </div>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      ${card('💸 Aplicado (em aberto)', fmtR$(totalAplicado), 'text-texto')}
+      ${card('💰 Já recebido', fmtR$(totalRecebido), 'text-emerald-400')}
+      ${card('📈 Lucro já recebido', fmtR$(lucroRecebido), 'text-emerald-400')}
+      ${card('🔮 Lucro previsto (abertas)', fmtR$(lucroPrevisto), 'text-sky-400')}
+    </div>
+    ${vencidas.length ? `<div class="bg-red-950/40 border border-red-900 rounded-xl p-4 md:p-5 mb-6">
+      <h3 class="text-sm font-black text-red-400 uppercase tracking-wider mb-2">⚠️ Vencidas e não quitadas (${vencidas.length})</h3>
+      ${vencidas.map(linhaVenc).join('')}
+    </div>` : ''}
+    <div class="bg-panel border border-linha rounded-xl p-4 md:p-5">
+      <h3 class="text-sm font-black uppercase tracking-wider mb-2">⏰ Próximos vencimentos</h3>
+      ${proximas.length ? proximas.map(linhaVenc).join('') : '<p class="text-sm text-mutado py-2">Nenhuma aplicação em aberto. Clique em ＋ Nova aplicação para começar.</p>'}
+    </div>`;
+}
+
+/* ===================== 📋 APLICAÇÕES ===================== */
+function renderAplicacoes(container) {
+  const hoje = hojeLocal();
+  let lista = estado.aplicacoes.slice();
+  if (estado.filtroBanco) lista = lista.filter(a => a.bancoId === estado.filtroBanco);
+  if (estado.filtroStatus === 'vencida') lista = lista.filter(a => vencida(a));
+  else if (estado.filtroStatus !== 'todas') lista = lista.filter(a => statusDe(a) === estado.filtroStatus);
+
+  const linhas = lista.map(a => {
+    const st = statusDe(a), info = STATUS_INFO[st];
+    const rec = recebidoDe(a.id), previsto = montantePrevisto(a);
+    const falta = Math.max(0, previsto - rec);
+    const atrasada = vencida(a);
+    return `<tr class="border-b border-linha last:border-0 ${atrasada ? 'bg-red-950/30' : ''}">
+      <td class="p-3 whitespace-nowrap">${fmtData(a.dataEnvio)}</td>
+      <td class="p-3 font-bold text-texto">${esc(nomeBanco(a.bancoId))}${a.observacao ? `<div class="text-[11px] text-mutado font-normal">${esc(a.observacao)}</div>` : ''}</td>
+      <td class="p-3 font-bold text-texto whitespace-nowrap">${fmtR$(a.valor)}</td>
+      <td class="p-3 whitespace-nowrap">${a.taxa}% <span class="text-mutado text-xs">${a.taxaTipo === 'mes' ? 'a.m.' : 'total'}</span></td>
+      <td class="p-3 whitespace-nowrap">${fmtR$(previsto)}<div class="text-[11px] text-emerald-400">lucro ${fmtR$(previsto - a.valor)}</div></td>
+      <td class="p-3 whitespace-nowrap ${rec > 0 ? 'text-emerald-400 font-bold' : 'text-mutado'}">${fmtR$(rec)}</td>
+      <td class="p-3 whitespace-nowrap ${falta > 0 ? 'text-amber-400 font-bold' : 'text-mutado'}">${fmtR$(falta)}</td>
+      <td class="p-3 whitespace-nowrap ${atrasada ? 'text-red-400 font-bold' : ''}">${fmtData(a.dataPrevista)}${atrasada ? ' ⚠️' : ''}</td>
+      <td class="p-3 whitespace-nowrap font-bold ${info.cls}">${info.rotulo}</td>
+      <td class="p-3 whitespace-nowrap">
+        <button onclick="abrirRecebimentos('${a.id}')" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition" title="Recebimentos">💸 Receber</button>
+        <button onclick="abrirModalAplicacao('${a.id}')" class="px-2.5 py-1.5 rounded-lg bg-input hover:brightness-125 text-xs font-bold transition" title="Editar">✏️</button>
+        <button onclick="excluirAplicacao('${a.id}')" class="px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white text-xs font-bold transition" title="Excluir">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+      <h2 class="text-xl md:text-2xl font-black">📋 Aplicações</h2>
+      <button onclick="abrirModalAplicacao()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition">＋ Nova aplicação</button>
+    </div>
+    <div class="flex flex-wrap gap-2 mb-4">
+      <select onchange="estado.filtroStatus=this.value; renderAplicacoes($('conteudo-principal'))" class="px-3 py-2 bg-input border border-linha rounded-lg text-xs outline-none cursor-pointer">
+        <option value="todas" ${estado.filtroStatus === 'todas' ? 'selected' : ''}>Todos os status</option>
+        <option value="aplicado" ${estado.filtroStatus === 'aplicado' ? 'selected' : ''}>🔵 Aplicado</option>
+        <option value="parcial" ${estado.filtroStatus === 'parcial' ? 'selected' : ''}>🟡 Parcial</option>
+        <option value="quitado" ${estado.filtroStatus === 'quitado' ? 'selected' : ''}>✅ Quitado</option>
+        <option value="encerrada" ${estado.filtroStatus === 'encerrada' ? 'selected' : ''}>✅ Encerrada</option>
+        <option value="vencida" ${estado.filtroStatus === 'vencida' ? 'selected' : ''}>⚠️ Vencida</option>
+      </select>
+      <select onchange="estado.filtroBanco=this.value; renderAplicacoes($('conteudo-principal'))" class="px-3 py-2 bg-input border border-linha rounded-lg text-xs outline-none cursor-pointer">
+        <option value="">🏦 Todos os bancos</option>
+        ${estado.bancos.map(b => `<option value="${b.id}" ${estado.filtroBanco === b.id ? 'selected' : ''}>${esc(b.nome)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="bg-panel border border-linha rounded-xl overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm text-mutado min-w-[900px]">
+          <thead class="bg-panelAlt text-texto uppercase text-[11px]">
+            <tr><th class="p-3">Envio</th><th class="p-3">Banco</th><th class="p-3">Valor</th><th class="p-3">Retorno</th><th class="p-3">Previsto</th><th class="p-3">Recebido</th><th class="p-3">Falta</th><th class="p-3">Vencimento</th><th class="p-3">Status</th><th class="p-3">Ações</th></tr>
+          </thead>
+          <tbody>${linhas || '<tr><td colspan="10" class="p-5 text-center text-mutado">Nenhuma aplicação encontrada.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/* ---------- Modal: nova / editar aplicação ---------- */
+function abrirModalAplicacao(id) {
+  const ap = id ? estado.aplicacoes.find(a => a.id === id) : null;
+  if (!estado.bancos.length) { toast('Cadastre um banco primeiro (aba 🏦 Bancos).', false); mudarAba('bancos'); return; }
+  const hoje = hojeLocal();
+  abrirModal(`
+    <h3 class="text-lg font-black mb-4">${ap ? '✏️ Editar aplicação' : '＋ Nova aplicação'}</h3>
+    <div class="space-y-3">
+      <div><label class="lbl">🏦 Banco</label>
+        <select id="apBanco" class="inp">${estado.bancos.map(b => `<option value="${b.id}" ${ap && ap.bancoId === b.id ? 'selected' : ''}>${esc(b.nome)}${b.conta ? ' · conta ' + esc(b.conta) : ''}</option>`).join('')}</select></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">📅 Data do envio</label><input id="apData" type="date" class="inp" value="${ap ? ap.dataEnvio : hoje}"></div>
+        <div><label class="lbl">💵 Valor enviado (R$)</label><input id="apValor" type="number" min="0.01" step="0.01" class="inp" value="${ap ? ap.valor : ''}" placeholder="Ex: 60000"></div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">📈 % de retorno</label><input id="apTaxa" type="number" min="0" step="0.01" class="inp" value="${ap ? ap.taxa : ''}" placeholder="Ex: 1.25"></div>
+        <div><label class="lbl">Tipo da taxa</label>
+          <select id="apTaxaTipo" class="inp">
+            <option value="mes" ${ap && ap.taxaTipo === 'mes' ? 'selected' : ''}>% ao mês (juros compostos)</option>
+            <option value="total" ${ap && ap.taxaTipo === 'total' ? 'selected' : ''}>% total da aplicação</option>
+          </select></div>
+      </div>
+      <div><label class="lbl">⏰ Data prevista da volta (vencimento)</label><input id="apPrevista" type="date" class="inp" value="${ap ? (ap.dataPrevista || '') : ''}"></div>
+      <div><label class="lbl">📝 Observação (opcional)</label><input id="apObs" type="text" class="inp" value="${ap ? esc(ap.observacao) : ''}" placeholder="Ex: para quem / para quê"></div>
+      <button onclick="salvarAplicacao('${ap ? ap.id : ''}')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black rounded-xl transition">✅ Salvar aplicação</button>
+    </div>`);
+}
+async function salvarAplicacao(id) {
+  const bancoId = $('apBanco').value;
+  const dataEnvio = $('apData').value;
+  const valor = parseFloat($('apValor').value);
+  const taxa = parseFloat($('apTaxa').value);
+  const taxaTipo = $('apTaxaTipo').value;
+  const dataPrevista = $('apPrevista').value;
+  const observacao = $('apObs').value.trim();
+  if (!dataEnvio) { toast('Informe a data do envio.', false); return; }
+  if (!valor || valor <= 0) { toast('Informe o valor enviado.', false); return; }
+  if (isNaN(taxa) || taxa < 0) { toast('Informe a % de retorno.', false); return; }
+  if (!dataPrevista) { toast('Informe a data prevista da volta.', false); return; }
+  if (dataPrevista < dataEnvio) { toast('O vencimento não pode ser antes do envio.', false); return; }
+  const registro = { banco_id: bancoId, data_envio: dataEnvio, valor: +valor.toFixed(2), taxa: +taxa.toFixed(4), taxa_tipo: taxaTipo, data_prevista: dataPrevista, observacao };
+  try {
+    if (id) { const { error } = await supabaseClient.from('fin_aplicacoes').update(registro).eq('id', id); if (error) throw error; }
+    else { const { error } = await supabaseClient.from('fin_aplicacoes').insert({ id: novoId('apl'), ...registro }); if (error) throw error; }
+    fecharModal(); await carregarTudo(); mudarAba(estado.abaAtiva); toast('✅ Aplicação salva.');
+  } catch (e) { console.error(e); toast('Não foi possível salvar a aplicação.', false); }
+}
+async function excluirAplicacao(id) {
+  const ap = estado.aplicacoes.find(a => a.id === id); if (!ap) return;
+  if (!confirm(`Excluir a aplicação de ${fmtR$(ap.valor)} (${nomeBanco(ap.bancoId)}, envio ${fmtData(ap.dataEnvio)})? Os recebimentos dela também serão apagados.`)) return;
+  try {
+    await supabaseClient.from('fin_recebimentos').delete().eq('aplicacao_id', id);
+    const { error } = await supabaseClient.from('fin_aplicacoes').delete().eq('id', id);
+    if (error) throw error;
+    await carregarTudo(); mudarAba(estado.abaAtiva); toast('🗑️ Aplicação excluída.');
+  } catch (e) { console.error(e); toast('Não foi possível excluir.', false); }
+}
+
+/* ---------- Modal: recebimentos ---------- */
+function abrirRecebimentos(apId) {
+  const ap = estado.aplicacoes.find(a => a.id === apId); if (!ap) return;
+  const recs = estado.recebimentos.filter(r => r.aplicacaoId === apId);
+  const recebido = recebidoDe(apId), previsto = montantePrevisto(ap), falta = Math.max(0, previsto - recebido);
+  const st = statusDe(ap), info = STATUS_INFO[st];
+  const linhas = recs.map(r => `<div class="flex items-center justify-between gap-2 py-2 border-b border-linha last:border-0">
+      <div><p class="text-sm font-bold text-texto">${fmtR$(r.valor)} <span class="text-mutado font-normal text-xs">em ${fmtData(r.data)}</span></p>
+      ${r.observacao ? `<p class="text-[11px] text-mutado">${esc(r.observacao)}</p>` : ''}</div>
+      <button onclick="excluirRecebimento('${r.id}','${apId}')" class="px-2 py-1 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white text-xs font-bold transition" title="Estornar recebimento">🗑️</button>
+    </div>`).join('');
+  abrirModal(`
+    <h3 class="text-lg font-black mb-1">💸 Recebimentos</h3>
+    <p class="text-xs text-mutado mb-4">${esc(nomeBanco(ap.bancoId))} · enviado ${fmtR$(ap.valor)} em ${fmtData(ap.dataEnvio)} · status <b class="${info.cls}">${info.rotulo}</b></p>
+    <div class="grid grid-cols-3 gap-2 mb-4 text-center">
+      <div class="bg-panelAlt border border-linha rounded-lg p-2.5"><p class="text-[9px] uppercase text-mutado font-bold">Previsto</p><p class="text-sm font-black">${fmtR$(previsto)}</p></div>
+      <div class="bg-panelAlt border border-linha rounded-lg p-2.5"><p class="text-[9px] uppercase text-mutado font-bold">Recebido</p><p class="text-sm font-black text-emerald-400">${fmtR$(recebido)}</p></div>
+      <div class="bg-panelAlt border border-linha rounded-lg p-2.5"><p class="text-[9px] uppercase text-mutado font-bold">Falta</p><p class="text-sm font-black text-amber-400">${fmtR$(falta)}</p></div>
+    </div>
+    <div class="space-y-3 mb-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">📅 Data do recebimento</label><input id="recData" type="date" class="inp" value="${hojeLocal()}"></div>
+        <div><label class="lbl">💵 Valor recebido (R$)</label><input id="recValor" type="number" min="0.01" step="0.01" class="inp" value="${falta > 0 ? falta.toFixed(2) : ''}" placeholder="0,00"></div>
+      </div>
+      <div><label class="lbl">📝 Observação (opcional)</label><input id="recObs" type="text" class="inp" placeholder="Ex: PIX, transferência..."></div>
+      <button onclick="salvarRecebimento('${apId}')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black rounded-xl transition">✅ Registrar recebimento</button>
+    </div>
+    <h4 class="text-xs font-black uppercase tracking-wider text-mutado mb-1">Histórico</h4>
+    <div class="mb-4">${linhas || '<p class="text-sm text-mutado py-2">Nenhum recebimento ainda.</p>'}</div>
+    ${ap.encerrada
+      ? `<button onclick="alternarEncerrada('${apId}', false)" class="w-full py-2 bg-input hover:brightness-125 text-xs font-bold rounded-xl transition">↩️ Reabrir aplicação</button>`
+      : `<button onclick="alternarEncerrada('${apId}', true)" class="w-full py-2 bg-input hover:brightness-125 text-xs font-bold rounded-xl transition">✅ Encerrar aplicação (dar baixa com o que foi recebido)</button>`}`);
+}
+async function salvarRecebimento(apId) {
+  const data = $('recData').value, valor = parseFloat($('recValor').value), obs = $('recObs').value.trim();
+  if (!data) { toast('Informe a data do recebimento.', false); return; }
+  if (!valor || valor <= 0) { toast('Informe o valor recebido.', false); return; }
+  try {
+    const { error } = await supabaseClient.from('fin_recebimentos').insert({ id: novoId('rec'), aplicacao_id: apId, data, valor: +valor.toFixed(2), observacao: obs });
+    if (error) throw error;
+    await carregarTudo(); abrirRecebimentos(apId); renderAbaAtual(); toast('💸 Recebimento registrado.');
+  } catch (e) { console.error(e); toast('Não foi possível registrar o recebimento.', false); }
+}
+async function excluirRecebimento(id, apId) {
+  if (!confirm('Estornar este recebimento? O valor volta para o "falta receber".')) return;
+  try {
+    const { error } = await supabaseClient.from('fin_recebimentos').delete().eq('id', id);
+    if (error) throw error;
+    await carregarTudo(); abrirRecebimentos(apId); renderAbaAtual(); toast('🗑️ Recebimento estornado.');
+  } catch (e) { console.error(e); toast('Não foi possível estornar.', false); }
+}
+async function alternarEncerrada(apId, encerrar) {
+  try {
+    const { error } = await supabaseClient.from('fin_aplicacoes').update({ encerrada: encerrar }).eq('id', apId);
+    if (error) throw error;
+    await carregarTudo(); fecharModal(); renderAbaAtual(); toast(encerrar ? '✅ Aplicação encerrada.' : '↩️ Aplicação reaberta.');
+  } catch (e) { console.error(e); toast('Não foi possível atualizar.', false); }
+}
+function renderAbaAtual() { mudarAba(estado.abaAtiva); }
+
+/* ===================== 🏦 BANCOS ===================== */
+let bancoEditando = null;
+function renderBancos(container) {
+  const b = bancoEditando ? estado.bancos.find(x => x.id === bancoEditando) : null;
+  const linhas = estado.bancos.map(x => {
+    const n = estado.aplicacoes.filter(a => a.bancoId === x.id).length;
+    return `<tr class="border-b border-linha last:border-0">
+      <td class="p-3 font-bold text-texto">${esc(x.nome)}<div class="text-[11px] text-mutado font-normal">${n} aplicação(ões)</div></td>
+      <td class="p-3">${esc(x.agencia) || '—'}</td>
+      <td class="p-3">${esc(x.conta) || '—'}</td>
+      <td class="p-3">${esc(x.titular) || '—'}</td>
+      <td class="p-3 whitespace-nowrap">
+        <button onclick="editarBanco('${x.id}')" class="px-2.5 py-1.5 rounded-lg bg-input hover:brightness-125 text-xs font-bold transition">✏️</button>
+        <button onclick="excluirBanco('${x.id}')" class="px-2.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white text-xs font-bold transition">🗑️</button>
+      </td></tr>`;
+  }).join('');
+  container.innerHTML = `
+    <h2 class="text-xl md:text-2xl font-black mb-5">🏦 Bancos</h2>
+    <div class="bg-panel border border-linha rounded-xl p-4 md:p-5 mb-6">
+      <h3 class="text-sm font-black uppercase tracking-wider mb-3">${b ? '✏️ Editar banco' : '＋ Cadastrar banco'}</h3>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div><label class="lbl">🏦 Nome do banco *</label><input id="bcNome" class="inp" value="${b ? esc(b.nome) : ''}" placeholder="Ex: Banco do Brasil"></div>
+        <div><label class="lbl">Agência</label><input id="bcAgencia" class="inp" value="${b ? esc(b.agencia) : ''}" placeholder="Ex: 1234-5"></div>
+        <div><label class="lbl">Conta</label><input id="bcConta" class="inp" value="${b ? esc(b.conta) : ''}" placeholder="Ex: 12345-6"></div>
+        <div><label class="lbl">Titular</label><input id="bcTitular" class="inp" value="${b ? esc(b.titular) : ''}" placeholder="Nome do titular"></div>
+      </div>
+      <div class="flex gap-2 mt-4">
+        <button onclick="salvarBanco()" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl transition">${b ? '✅ Salvar alterações' : '＋ Cadastrar banco'}</button>
+        ${b ? '<button onclick="bancoEditando=null; renderBancos($(\'conteudo-principal\'))" class="px-4 py-2.5 bg-input hover:brightness-125 text-xs font-bold rounded-xl transition">Cancelar edição</button>' : ''}
+      </div>
+    </div>
+    <div class="bg-panel border border-linha rounded-xl overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-sm text-mutado min-w-[640px]">
+          <thead class="bg-panelAlt text-texto uppercase text-[11px]"><tr><th class="p-3">Banco</th><th class="p-3">Agência</th><th class="p-3">Conta</th><th class="p-3">Titular</th><th class="p-3">Ações</th></tr></thead>
+          <tbody>${linhas || '<tr><td colspan="5" class="p-5 text-center text-mutado">Nenhum banco cadastrado.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+function editarBanco(id) { bancoEditando = id; renderBancos($('conteudo-principal')); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+async function salvarBanco() {
+  const nome = $('bcNome').value.trim();
+  if (!nome) { toast('Informe o nome do banco.', false); return; }
+  const registro = { nome, agencia: $('bcAgencia').value.trim(), conta: $('bcConta').value.trim(), titular: $('bcTitular').value.trim() };
+  const duplicado = estado.bancos.some(x => x.nome.toLowerCase() === nome.toLowerCase() && x.id !== bancoEditando);
+  if (duplicado) { toast('Já existe um banco com esse nome.', false); return; }
+  try {
+    if (bancoEditando) { const { error } = await supabaseClient.from('fin_bancos').update(registro).eq('id', bancoEditando); if (error) throw error; }
+    else { const { error } = await supabaseClient.from('fin_bancos').insert({ id: novoId('banco'), ...registro }); if (error) throw error; }
+    bancoEditando = null; await carregarTudo(); renderBancos($('conteudo-principal')); toast('🏦 Banco salvo.');
+  } catch (e) { console.error(e); toast('Não foi possível salvar o banco.', false); }
+}
+async function excluirBanco(id) {
+  const b = estado.bancos.find(x => x.id === id); if (!b) return;
+  const n = estado.aplicacoes.filter(a => a.bancoId === id).length;
+  if (n > 0) { toast(`Este banco tem ${n} aplicação(ões) — exclua ou edite elas antes.`, false); return; }
+  if (!confirm(`Excluir o banco ${b.nome}?`)) return;
+  try {
+    const { error } = await supabaseClient.from('fin_bancos').delete().eq('id', id);
+    if (error) throw error;
+    if (bancoEditando === id) bancoEditando = null;
+    await carregarTudo(); renderBancos($('conteudo-principal')); toast('🗑️ Banco excluído.');
+  } catch (e) { console.error(e); toast('Não foi possível excluir o banco.', false); }
+}
+
+/* ===================== MODAL GENÉRICO ===================== */
+function abrirModal(html) {
+  $('modalRoot').innerHTML = `
+    <div id="modalFundo" class="fixed inset-0 z-[100] bg-black/90 overflow-y-auto" onclick="if(event.target===this)fecharModal()">
+      <div class="min-h-full flex p-3 md:p-4">
+        <div class="relative bg-panel border border-linha rounded-2xl max-w-md w-full m-auto p-5 md:p-6 shadow-2xl" onclick="event.stopPropagation()">
+          <button onclick="fecharModal()" class="absolute top-3 right-3 w-9 h-9 rounded-full bg-red-600 text-white font-bold shadow-xl">✕</button>
+          ${html}
+        </div>
+      </div>
+    </div>`;
+}
+function fecharModal() { $('modalRoot').innerHTML = ''; }
+
+/* ===================== INICIALIZAÇÃO ===================== */
+(async () => {
+  const salvo = usuarioSalvo();
+  if (salvo && supabaseClient) {
+    estado.usuario = salvo;
+    try { await entrarApp(); return; } catch (e) { console.error(e); }
+  }
+})();
+</script>
+</body>
+</html>
