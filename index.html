@@ -189,6 +189,70 @@ function statusDe(ap) {
   return 'parcial';
 }
 const vencida = ap => { const s = statusDe(ap); return s !== 'quitado' && s !== 'encerrada' && ap.dataPrevista && ap.dataPrevista < hojeLocal(); };
+
+/* ===================== 🗓️ PROJEÇÃO MÊS A MÊS ===================== */
+// Soma k meses a uma data ISO mantendo o dia (com trava no fim do mês).
+function somaMesesISO(iso, k) {
+  const [a, m, d] = iso.split('-').map(Number);
+  const base = new Date(a, m - 1 + k, 1, 12);
+  const ultimoDia = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+  base.setDate(Math.min(d, ultimoDia));
+  return isoData(base);
+}
+const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const fmtDataLonga = iso => { if (!iso) return '—'; const [a, m, d] = iso.split('-'); return `${d} de ${MESES_PT[Number(m) - 1]}. de ${a}`; };
+// Projeção consolidada: aplicações em aberto com taxa ao mês, reaplicadas mensalmente na mesma taxa.
+// Rendimento do mês sai dos saldos EXATOS (sem arredondar antes) — é o que faz o mês 3 fechar em 768,87 e não 768,86.
+function projecaoConsolidada(lista) {
+  const aps = (lista || []).filter(a => a.taxaTipo === 'mes' && a.taxa > 0 && a.valor > 0 && ['aplicado', 'parcial'].includes(statusDe(a)));
+  if (!aps.length) return null;
+  const inicio = aps.map(a => a.dataEnvio).sort()[0];
+  const capital = aps.reduce((s, a) => s + a.valor, 0);
+  const linhas = [];
+  let anterior = capital;
+  for (let k = 1; k <= 12; k++) {
+    const data = somaMesesISO(inicio, k);
+    const saldo = aps.filter(a => a.dataEnvio <= data).reduce((s, a) => s + montanteEm(a, data), 0);
+    linhas.push({ mes: k, data, saldo, rendimento: saldo - anterior });
+    anterior = saldo;
+  }
+  return { inicio, capital, linhas, totalRendimento: anterior - capital };
+}
+function projecaoHTML(lista) {
+  const p = projecaoConsolidada(lista);
+  if (!p) return '';
+  const linha = l => `
+    <div class="flex items-center justify-between gap-3 px-4 md:px-5 py-3 border-b border-linha last:border-0">
+      <div class="min-w-0">
+        <span class="font-bold text-sm md:text-base">Mês ${l.mes}</span>
+        <span class="text-mutado text-xs md:text-sm ml-2">${fmtDataLonga(l.data)}</span>
+      </div>
+      <div class="text-right shrink-0">
+        <p class="font-black text-base md:text-lg">${fmtR$(l.saldo)}</p>
+        <p class="text-[11px] md:text-xs text-emerald-400">rendimento +${fmtR$(l.rendimento)} no mês</p>
+      </div>
+    </div>`;
+  return `
+  <div class="bg-panel border border-linha rounded-xl overflow-hidden mb-6">
+    <div class="px-4 md:px-5 pt-4 pb-3">
+      <h3 class="text-sm font-black">🗓️ Projeção mês a mês</h3>
+      <p class="text-[11px] text-mutado">Se o capital ficar aplicado e for reaplicado todo mês na mesma taxa — em 12 meses: <span class="text-emerald-400 font-bold">+${fmtR$(p.totalRendimento)}</span></p>
+    </div>
+    <div class="bg-panelAlt px-4 md:px-5 py-3 flex items-center justify-between gap-3 border-y border-linha">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="font-bold text-sm md:text-base">Início</span>
+        <span class="text-mutado text-xs md:text-sm">${fmtDataLonga(p.inicio)}</span>
+        <span class="bg-amber-400 text-black text-[10px] font-black px-2 py-0.5 rounded-full">atual</span>
+      </div>
+      <div class="text-right shrink-0">
+        <p class="font-black text-base md:text-lg">${fmtR$(p.capital)}</p>
+        <p class="text-[11px] text-mutado">capital aplicado</p>
+      </div>
+    </div>
+    ${p.linhas.map(linha).join('')}
+    <p class="px-4 md:px-5 py-3 text-[11px] text-mutado">Projeção das aplicações em aberto com rendimento ao mês (as do filtro acima), somadas e reaplicadas mensalmente na mesma taxa. Valores previstos — o rendimento real pode variar.</p>
+  </div>`;
+}
 const STATUS_INFO = {
   aplicado:  { rotulo: '🔵 Aplicado',  cls: 'text-sky-400' },
   parcial:   { rotulo: '🟡 Parcial',   cls: 'text-amber-400' },
@@ -548,6 +612,7 @@ function renderAnalises(container) {
       ${kpi('kpiRecebido', '💰 Total recebido', fmtR$(totalRecebido), 'text-emerald-400')}
       ${kpi('kpiSaldo', '⏳ Saldo a receber', fmtR$(saldoReceber), 'text-amber-400')}
     </div>
+    ${projecaoHTML(lista)}
     ${lista.length ? `<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       ${painel('🥧 Saldo a receber por banco', 'Quanto falta voltar de cada banco (aplicações em aberto)', 'gBanco', 'wrapBanco')}
       ${painel('📊 Fluxo mensal', 'Enviado × recebido por mês (últimos 12 meses)', 'gFluxo', 'wrapFluxo')}
